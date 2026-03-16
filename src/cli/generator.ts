@@ -23,7 +23,7 @@ export function generateConductorDSL(model: Model, filePath: string, destination
     }
 
     if(model.elements.some(element => element.$type === 'Workflow')) {
-        const workflowDefinitions = generateWorkflowDefinitions(model.elements as Workflow[]);
+        const workflowDefinitions = generateWorkflowDefinitions(model.elements.filter((element): element is Workflow => element.$type === 'Workflow'));
         fs.writeFileSync(generatedFilePath, JSON.stringify(workflowDefinitions, null, 2));
     }
     return generatedFilePath;

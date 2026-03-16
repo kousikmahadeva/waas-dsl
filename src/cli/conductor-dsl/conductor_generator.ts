@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import type { Task, Workflow, Code_Block, Task_Composition } from '../../language/generated/ast.js';
+import type { Task, Workflow, Code_Block, Task_Composition, JSON_Object, JSON_Value } from '../../language/generated/ast.js';
 
 type ConductorTaskDefinition = {
     name: string;
@@ -8,6 +8,10 @@ type ConductorTaskDefinition = {
     timeoutPolicy?: string;
     timeoutSeconds?: number;
     retryCount?: number;
+    inputParameters?: Record<string, unknown>;
+    subWorkflowParam?: {
+        name: string;
+    };
     decisionCases?: Record<string, ConductorTaskDefinition[]>;
 };
 
@@ -27,12 +31,13 @@ export function generateWorkflowDefinitions(workflows: Workflow[]): ConductorWor
 function generateWorkflowDefinition(workflow: Workflow): ConductorWorkflowDefinition {
     const workflowDefinition: ConductorWorkflowDefinition = {
         name: workflow.name,
-        createTime: new Date().toISOString()
+        createTime: new Date().toISOString(),
+        tasks: []
     };
-    if(workflow.version !== undefined) {
+    if (workflow.version !== undefined) {
         workflowDefinition.version = workflow.version;
     }
-    if(workflow.description !== undefined) {
+    if (workflow.description !== undefined) {
         workflowDefinition.description = workflow.description;
     }
     if(workflow.inputs !== undefined) {
@@ -59,9 +64,15 @@ function splitTaskOrCode(taskOrCode: Task | Code_Block | Task_Composition): Cond
 }
 
 function generateTaskCompositionDefinition(taskComposition: Task_Composition): ConductorTaskDefinition {
+    const taskReferenceName = taskComposition.variablename ?? taskComposition.template_name;
     const taskDefinition: ConductorTaskDefinition = {
         name: taskComposition.template_name,
-        taskReferenceName: taskComposition.template_name
+        taskReferenceName,
+        type: 'SUB_WORKFLOW',
+        inputParameters: generateInputParameters(taskComposition.inputs),
+        subWorkflowParam: {
+            name: taskComposition.template_name
+        }
     };
     return taskDefinition;
 }
@@ -120,4 +131,42 @@ function generateIfDefinition(if_block: Code_Block): ConductorTaskDefinition {
         taskDefinition.decisionCases?.['FALSE']?.push(splitTaskOrCode(block));
     });
     return taskDefinition;
+}
+
+function generateInputParameters(inputObject: JSON_Object): Record<string, unknown> {
+    const inputParameters: Record<string, unknown> = {};
+    inputObject.key.forEach((key, index) => {
+        const keyName = key.member !== undefined ? `${key.name}.${key.member}` : key.name;
+        const value = inputObject.value[index];
+        if (value !== undefined) {
+            inputParameters[keyName] = convertAnyValue(value);
+        }
+    });
+    return inputParameters;
+}
+
+function convertAnyValue(value: JSON_Object | JSON_Value): unknown {
+    if ('key' in value) {
+        return generateInputParameters(value);
+    }
+    if (value.member === undefined) {
+        return parsePrimitiveValue(value.name);
+    }
+    if (value.name === 'inputs') {
+        return `\${workflow.input.${value.member}}`;
+    }
+    return `\${${value.name}.output.${value.member}}`;
+}
+
+function parsePrimitiveValue(value: string): string | number | boolean {
+    if (value === 'true') {
+        return true;
+    }
+    if (value === 'false') {
+        return false;
+    }
+    if (/^-?\d+$/.test(value)) {
+        return Number(value);
+    }
+    return value;
 }
