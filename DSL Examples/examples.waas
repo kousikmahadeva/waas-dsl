@@ -1,0 +1,21 @@
+workflow OrderProcessing {
+    description "Handles customer orders"
+    version 1
+
+    task CheckInventory {
+        type: http
+        timeout: "5m"
+        retries: 3
+    }
+
+    task ChargeCustomer {
+        type: worker
+        depends_on: [CheckInventory]
+        timeout: "10m"
+    }
+
+    task ShipItems {
+        type: worker
+        depends_on: [ChargeCustomer]
+    }
+}

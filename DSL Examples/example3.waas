@@ -1,0 +1,93 @@
+workflow EnterpriseOrderFulfillment {
+    version: 2
+    description: "End-to-end order processing with fraud check and human-in-the-loop"
+    inputs: [orderId, customerId, paymentMethod]
+
+    // 1. Inline HTTP Tasks: No need to write a separate worker for basic APIs
+    risk_score = run http CheckFraud {
+        method: POST
+        url: "https://api.fraud-engine.internal/v1/analyze"
+        body: { order: inputs.orderId, user: inputs.customerId }
+        timeout: 2m
+        retries: 3
+    }
+
+    // 2. Complex Routing (Switch/Case behavior)
+    if (risk_score.status == "REJECTED") {
+        
+        run FailOrder {
+            type: worker
+            payload: { order: inputs.orderId, reason: "Fraud detected" }
+        }
+        terminate(status: FAILED, reason: "High Risk")
+
+    } else if (risk_score.status == "MANUAL_REVIEW") {
+        
+        // 3. Wait States (Human-in-the-loop / Asynchronous Signals)
+        review = wait WaitForFraudTeam {
+            timeout: 24h
+        }
+        
+        if (review.approved == false) {
+            run FailOrder {
+                type: worker
+                payload: { order: inputs.orderId, reason: review.notes }
+            }
+            terminate(status: FAILED)
+        }
+    }
+
+    // 4. Standard Worker Execution
+    inventory = run ReserveInventory {
+        type: worker
+        payload: { order: inputs.orderId }
+        retries: 5
+    }
+
+    // 5. Sub-Workflows: Calling another DSL file entirely
+    if (inventory.inStock == false) {
+        
+        call BackorderHandlingWorkflow {
+            payload: { 
+                order: inputs.orderId, 
+                customer: inputs.customerId 
+            }
+        }
+        
+    } else {
+        
+        // 6. Complex Parallelism (Fork-Join)
+        parallel {
+            
+            // Branch 1: Payment
+            payment = run ProcessPayment {
+                type: worker
+                payload: { order: inputs.orderId, method: inputs.paymentMethod }
+            }
+            
+            // Branch 2: Shipping Preparation
+            shipping = run GenerateLabels {
+                type: worker
+                payload: { order: inputs.orderId, warehouse: inventory.warehouseId }
+            }
+            
+            // Branch 3: Analytics (Fire and forget, doesn't block)
+            run LogOrderMetrics {
+                type: worker
+                async: true 
+                payload: { order: inputs.orderId, value: inventory.totalValue }
+            }
+        }
+
+        // 7. Implicit Join: This only executes AFTER the parallel block finishes.
+        // It seamlessly pulls data from the parallel branches above.
+        run DispatchOrder {
+            type: worker
+            payload: { 
+                order: inputs.orderId, 
+                tracking: shipping.trackingNumber,
+                receipt: payment.receiptId
+            }
+        }
+    }
+}

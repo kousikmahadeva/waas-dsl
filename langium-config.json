@@ -1,0 +1,15 @@
+{
+    "projectName": "WaasDsl",
+    "languages": [{
+        "id": "waas-dsl",
+        "grammar": "src/language/waas-dsl.langium",
+        "fileExtensions": [".waas"],
+        "textMate": {
+            "out": "syntaxes/waas-dsl.tmLanguage.json"
+        },
+        "monarch": {
+            "out": "src/syntaxes/waas-dsl.monarch.ts"
+        }
+    }],
+    "out": "src/language/generated"
+}

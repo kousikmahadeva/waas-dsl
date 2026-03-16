@@ -1,0 +1,40 @@
+workflow OrderProcessing {
+    version: 1
+    description: "Handles customer orders"
+    inputs: [orderId, customerId]
+
+    inventory = run CheckInventory {
+        type: http
+        timeout: 5m
+        retries: 3
+        payload: { id: inputs.orderId }
+    }
+
+    if (inventory.inStock == true) {
+        
+        payment = run ChargeCustomer {
+            type: worker
+            timeout: 10m
+            payload: { amount: inventory.price, user: inputs.customerId }
+        }
+
+        parallel {
+            run ShipItems {
+                type: worker
+                payload: { order: inputs.orderId, address: payment.address }
+            }
+            run SendReceipt {
+                type: worker
+                payload: { email: payment.email }
+            }
+        }
+
+    } else {
+        
+        run CancelOrder {
+            type: worker
+            payload: { reason: "Out of stock" }
+        }
+        
+    }
+}
